@@ -395,7 +395,7 @@ fun MainNavigator(
                     val tabs = listOf(
                         Triple(0, Icons.Default.Menu, "KPIs"),
                         Triple(1, Icons.Default.DateRange, "Demoras"),
-                        Triple(2, Icons.Default.List, "Gantt"),
+                        Triple(2, Icons.Default.List, "Vuelos"),
                         Triple(3, Icons.Default.LocationOn, "CCO"),
                         Triple(4, Icons.Default.Settings, "Ajustes")
                     )
@@ -421,7 +421,7 @@ fun MainNavigator(
                                     contentDescription = label,
                                     tint = if (isActive) Color.White else textSec,
                                     modifier = Modifier.size(if (isActive) 22.dp else 19.dp)
-                                )
+                               )
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = label,
@@ -451,7 +451,7 @@ fun MainNavigator(
                 when (tab) {
                     0 -> DashboardScreen(themeColors = themeColors)
                     1 -> FollowUpScreen(themeColors = themeColors)
-                    2 -> GanttScreen(themeColors = themeColors)
+                    2 -> VuelosScreen(themeColors = themeColors)
                     3 -> CCOScreen(themeColors = themeColors)
                     4 -> SettingsScreen(themeColors = themeColors, themeViewModel = themeViewModel, onSignOut = onSignOut)
                     else -> DashboardScreen(themeColors = themeColors)
@@ -983,11 +983,68 @@ fun FollowUpScreen(themeColors: ThemeColors) {
 }
 
 // ==========================================
-// 8. PANTALLA: GANTT INTERACTIVO (LINE-TIME)
+// 8. PANTALLA: VUELOS EN TIEMPO REAL / GANTT
 // ==========================================
 
 @Composable
-fun GanttScreen(themeColors: ThemeColors) {
+fun FlightSliderTimeline(
+    progress: Float,
+    activeColor: Color,
+    inactiveColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier.fillMaxWidth().height(16.dp)) {
+        val width = size.width
+        val height = size.height
+        val centerY = height / 2
+        
+        // Track line
+        drawLine(
+            color = inactiveColor.copy(alpha = 0.15f),
+            start = Offset(0f, centerY),
+            end = Offset(width, centerY),
+            strokeWidth = 2.dp.toPx()
+        )
+        
+        // Progress active line
+        drawLine(
+            color = activeColor,
+            start = Offset(0f, centerY),
+            end = Offset(width * progress, centerY),
+            strokeWidth = 3.dp.toPx()
+        )
+        
+        // Tick marks
+        val tickCount = 25
+        val spacing = width / (tickCount - 1)
+        for (i in 0 until tickCount) {
+            val x = i * spacing
+            val isPassed = x <= width * progress
+            val tickHeight = if (i % 5 == 0) 8.dp.toPx() else 4.dp.toPx()
+            drawLine(
+                color = if (isPassed) activeColor else inactiveColor.copy(alpha = 0.25f),
+                start = Offset(x, centerY - tickHeight / 2),
+                end = Offset(x, centerY + tickHeight / 2),
+                strokeWidth = 1.dp.toPx()
+            )
+        }
+        
+        // Dot thumb
+        drawCircle(
+            color = activeColor,
+            radius = 6.dp.toPx(),
+            center = Offset(width * progress, centerY)
+        )
+        drawCircle(
+            color = Color.White,
+            radius = 3.dp.toPx(),
+            center = Offset(width * progress, centerY)
+        )
+    }
+}
+
+@Composable
+fun VuelosScreen(themeColors: ThemeColors) {
     val ganttVM: GanttViewModel = koinViewModel()
     val flights by ganttVM.flights.collectAsState()
     
@@ -999,13 +1056,27 @@ fun GanttScreen(themeColors: ThemeColors) {
     var searchText by remember { mutableStateOf("") }
     var filterStatus by remember { mutableStateOf("ALL") }
     var selectedFlightForDetail by remember { mutableStateOf<Flight?>(null) }
+    
+    // viewMode: 0 = Live List (mockup style), 1 = Gantt Timeline
+    var viewMode by remember { mutableStateOf(0) }
+    var subTabFilterTransit by remember { mutableStateOf(0) } // 0 = En Tránsito (ON_AIR/DELAYED), 1 = Todos
 
-    val filteredFlights = remember(flights, searchText, filterStatus) {
+    val filteredFlights = remember(flights, searchText, filterStatus, subTabFilterTransit, viewMode) {
         flights.filter { flight ->
             val matchesSearch = searchText.isEmpty() || 
                     flight.flightNumber.contains(searchText, ignoreCase = true) ||
                     flight.registration.contains(searchText, ignoreCase = true)
-            val matchesStatus = filterStatus == "ALL" || flight.status == filterStatus
+            
+            val matchesStatus = if (viewMode == 0) {
+                if (subTabFilterTransit == 0) {
+                    flight.status == "ON_AIR" || flight.status == "DELAYED"
+                } else {
+                    true
+                }
+            } else {
+                filterStatus == "ALL" || flight.status == filterStatus
+            }
+            
             matchesSearch && matchesStatus
         }
     }
@@ -1017,137 +1088,507 @@ fun GanttScreen(themeColors: ThemeColors) {
             modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            // 1. HEADER PREMIUM
             item {
                 Spacer(modifier = Modifier.height(24.dp))
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "Timeline Gantt",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = textPrimary
-                    )
-                    Text(
-                        text = "Movimientos de la Flota por Matrícula",
-                        fontSize = 12.sp,
-                        color = textSec,
-                        fontWeight = FontWeight.Medium
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // User Avatar
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(accentColor.copy(alpha = 0.15f))
+                                .border(1.dp, accentColor.copy(alpha = 0.3f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = "Profile",
+                                tint = accentColor,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        
+                        Spacer(modifier = Modifier.width(12.dp))
+                        
+                        Column {
+                            Text(
+                                text = "Hola, Julian!",
+                                fontSize = 12.sp,
+                                color = textSec,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "MEX - Ciudad de México",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color.White
+                            )
+                        }
+                    }
+                    
+                    // Notification Button
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.03f))
+                            .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape)
+                            .clickable { }
+                            .wrapContentSize(Alignment.Center)
+                    ) {
+                        Box {
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = "Alerts",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            // Red Dot Badge
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(Color(parseColor(themeColors.kpiBad)), CircleShape)
+                                    .align(Alignment.TopEnd)
+                            )
+                        }
+                    }
                 }
             }
 
-            // Barra de Búsqueda y Filtros
+            // 2. TOGGLE DE VISTA (Live List vs Gantt)
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = searchText,
-                        onValueChange = { searchText = it },
-                        placeholder = { Text("Buscar por vuelo o matrícula...", color = Color.White.copy(alpha = 0.3f)) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = accentColor) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = accentColor,
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.1f),
-                            focusedLabelColor = accentColor,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // Filtros horizontales de estatus
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val filters = listOf(
-                            "ALL" to "Todos",
-                            "ON_AIR" to "En Aire",
-                            "DELAYED" to "Demorados",
-                            "ARRIVED" to "Arribados"
-                        )
-                        items(filters) { (status, label) ->
-                            val isActive = filterStatus == status
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .glassCard(cornerRadius = 24.dp, borderColor = accentColor, surfaceColor = Color.White.copy(alpha = 0.03f))
+                        .padding(4.dp)
+                ) {
+                    Row(modifier = Modifier.fillMaxSize()) {
+                        listOf("Vuelos en Vivo ✈️", "Línea Gantt 📊").forEachIndexed { index, title ->
+                            val isSelected = viewMode == index
+                            val bgAlpha by animateFloatAsState(if (isSelected) 1f else 0f)
                             Box(
                                 modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isActive) accentColor.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.03f))
-                                    .border(1.dp, if (isActive) accentColor else Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
-                                    .clickable { filterStatus = status }
-                                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                                    .weight(1f)
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(if (isSelected) accentColor else Color.Transparent)
+                                    .clickable { viewMode = index }
+                                    .wrapContentSize(Alignment.Center)
                             ) {
-                                Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (isActive) Color.White else textSec)
+                                Text(
+                                    text = title,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color.White else textSec
+                                )
                             }
                         }
                     }
                 }
             }
 
-            // Timeline de Matrículas
-            
-            if (groupedFlights.isEmpty()) {
+            // VISTA 0: VUELOS EN VIVO (MOCKUP STYLE)
+            if (viewMode == 0) {
+                // Curved Arc Flight Route Monitoring
                 item {
-                    Text(
-                        text = "No se encontraron vuelos asignados",
-                        color = textSec,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth().padding(40.dp)
-                    )
-                }
-            } else {
-                items(groupedFlights.keys.sorted()) { registration ->
-                    val fleetFlights = groupedFlights[registration] ?: emptyList()
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .glassCard(cornerRadius = 20.dp, borderColor = accentColor, surfaceColor = surfaceColor)
-                            .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                            .glassCard(cornerRadius = 24.dp, borderColor = accentColor, surfaceColor = surfaceColor)
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Info de matrícula
-                        Column(modifier = Modifier.width(75.dp)) {
-                            Text(registration, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Text("A320neo", fontSize = 9.sp, fontWeight = FontWeight.SemiBold, color = textSec)
-                        }
-
-                        // Línea de tiempo
-                        Box(modifier = Modifier.weight(1f).height(46.dp)) {
-                            // Línea de fondo
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(80.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
                             Canvas(modifier = Modifier.fillMaxSize()) {
-                                drawLine(
-                                    color = Color.White.copy(alpha = 0.05f),
-                                    start = Offset(0f, size.height / 2),
-                                    end = Offset(size.width, size.height / 2),
-                                    strokeWidth = 2.dp.toPx()
+                                val arcPath = Path().apply {
+                                    moveTo(20.dp.toPx(), size.height - 10.dp.toPx())
+                                    quadraticTo(
+                                        size.width / 2,
+                                        -20.dp.toPx(),
+                                        size.width - 20.dp.toPx(),
+                                        size.height - 10.dp.toPx()
+                                    )
+                                }
+                                drawPath(
+                                    path = arcPath,
+                                    color = accentColor.copy(alpha = 0.4f),
+                                    style = Stroke(
+                                        width = 1.5.dp.toPx(),
+                                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 10f), 0f),
+                                        cap = StrokeCap.Round
+                                    )
                                 )
                             }
+                            
+                            // Plane flying in center
+                            Icon(
+                                imageVector = Icons.Default.Send,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .align(Alignment.TopCenter)
+                                    .offset(y = 4.dp)
+                            )
 
-                            // Renderizado simple y limpio de cápsulas horizontales
                             Row(
-                                modifier = Modifier.fillMaxSize(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.Bottom
                             ) {
-                                fleetFlights.forEach { flight ->
-                                    val statusColor = when (flight.status) {
-                                        "ON_AIR" -> accentColor
-                                        "DELAYED" -> Color(parseColor(themeColors.kpiBad))
-                                        "ARRIVED" -> Color(parseColor(themeColors.kpiGood))
-                                        else -> Color.Gray
-                                    }
+                                Column(horizontalAlignment = Alignment.Start) {
+                                    Text("Origen", fontSize = 9.sp, color = textSec, fontWeight = FontWeight.Bold)
+                                    Text("MEX", fontSize = 22.sp, fontWeight = FontWeight.Black, color = Color.White)
+                                }
+                                
+                                Text(
+                                    text = "25 de Mayo 2026",
+                                    fontSize = 11.sp,
+                                    color = textSec,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(bottom = 2.dp)
+                                )
+                                
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("Destino", fontSize = 9.sp, color = textSec, fontWeight = FontWeight.Bold)
+                                    Text("CUN", fontSize = 22.sp, fontWeight = FontWeight.Black, color = Color.White)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(18.dp))
+
+                        // Inner sub-tab toggle "En Tránsito" vs "Todos"
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(42.dp)
+                                .background(Color.Black.copy(alpha = 0.15f), RoundedCornerShape(21.dp))
+                                .padding(3.dp)
+                        ) {
+                            Row(modifier = Modifier.fillMaxSize()) {
+                                listOf("En Tránsito", "Todos los Vuelos").forEachIndexed { index, label ->
+                                    val isSelected = subTabFilterTransit == index
                                     Box(
                                         modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(statusColor.copy(alpha = 0.15f))
-                                            .border(1.dp, statusColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                                            .clickable { selectedFlightForDetail = flight }
-                                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(18.dp))
+                                            .background(if (isSelected) Color(parseColor(themeColors.accent)).copy(alpha = 0.2f) else Color.Transparent)
+                                            .border(1.dp, if (isSelected) Color(parseColor(themeColors.accent)).copy(alpha = 0.4f) else Color.Transparent, RoundedCornerShape(18.dp))
+                                            .clickable { subTabFilterTransit = index }
+                                            .wrapContentSize(Alignment.Center)
                                     ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(
-                                                text = "${flight.flightNumber} ➔ ${flight.destination}",
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White
-                                            )
+                                        Text(
+                                            text = label,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) Color.White else textSec
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Search Box
+                item {
+                    OutlinedTextField(
+                        value = searchText,
+                        onValueChange = { searchText = it },
+                        placeholder = { Text("Buscar por vuelo, matrícula...", color = Color.White.copy(alpha = 0.3f)) },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = accentColor) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = accentColor,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.1f),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // Flight List Cards
+                if (filteredFlights.isEmpty()) {
+                    item {
+                        Text(
+                            text = "No hay vuelos en tránsito en este momento.",
+                            color = textSec,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(40.dp)
+                        )
+                    }
+                } else {
+                    items(filteredFlights) { flight ->
+                        // Calculate simulated flight progress
+                        val progress = when (flight.status) {
+                            "ARRIVED" -> 1.0f
+                            "FUTURE" -> 0.0f
+                            "ON_AIR" -> 0.65f
+                            "DELAYED" -> 0.35f
+                            else -> 0.5f
+                        }
+                        
+                        val statusColor = when (flight.status) {
+                            "ON_AIR" -> Color(parseColor(themeColors.accent))
+                            "DELAYED" -> Color(parseColor(themeColors.kpiBad))
+                            "ARRIVED" -> Color(parseColor(themeColors.kpiGood))
+                            else -> Color.Gray
+                        }
+
+                        val statusLabel = when (flight.status) {
+                            "ON_AIR" -> "EN VUELO"
+                            "DELAYED" -> "RETRASADO"
+                            "ARRIVED" -> "ARRIBADO"
+                            else -> "PLANEADO"
+                        }
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .glassCard(cornerRadius = 24.dp, borderColor = accentColor, surfaceColor = surfaceColor)
+                                .clickable { selectedFlightForDetail = flight }
+                                .padding(20.dp)
+                        ) {
+                            // Card Header: CDG -> LON style
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = flight.origin,
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = if (flight.origin == "MEX") "Ciudad de México" else "Origen",
+                                        fontSize = 10.sp,
+                                        color = textSec,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        imageVector = Icons.Default.Send,
+                                        contentDescription = null,
+                                        tint = accentColor,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "1h 45m", // Mock duration
+                                        fontSize = 9.sp,
+                                        color = textSec,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = flight.destination,
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = if (flight.destination == "CUN") "Cancún" else "Destino",
+                                        fontSize = 10.sp,
+                                        color = textSec,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Timeline slider
+                            FlightSliderTimeline(
+                                progress = progress,
+                                activeColor = statusColor,
+                                inactiveColor = textSec,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                            )
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            // Bottom info row
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(statusColor, CircleShape)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "${flight.flightNumber} • ${flight.registration}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                }
+                                
+                                // Beautiful Status Badge
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(statusColor.copy(alpha = 0.15f))
+                                        .border(1.dp, statusColor.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = statusLabel,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = statusColor
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // VISTA 1: TIMELINE GANTT (EXISTENTE REESTRUCTURADA)
+                item {
+                    Text(
+                        text = "Movimientos de la Flota por Matrícula",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = textPrimary,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = searchText,
+                            onValueChange = { searchText = it },
+                            placeholder = { Text("Buscar por vuelo o matrícula...", color = Color.White.copy(alpha = 0.3f)) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = accentColor) },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = accentColor,
+                                unfocusedBorderColor = Color.White.copy(alpha = 0.1f),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        // Estatus filters
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            val filters = listOf(
+                                "ALL" to "Todos",
+                                "ON_AIR" to "En Aire",
+                                "DELAYED" to "Demorados",
+                                "ARRIVED" to "Arribados"
+                            )
+                            items(filters) { (status, label) ->
+                                val isActive = filterStatus == status
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(if (isActive) accentColor.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.03f))
+                                        .border(1.dp, if (isActive) accentColor else Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                                        .clickable { filterStatus = status }
+                                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                                ) {
+                                    Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (isActive) Color.White else textSec)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (groupedFlights.isEmpty()) {
+                    item {
+                        Text(
+                            text = "No se encontraron vuelos asignados",
+                            color = textSec,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(40.dp)
+                        )
+                    }
+                } else {
+                    items(groupedFlights.keys.sorted()) { registration ->
+                        val fleetFlights = groupedFlights[registration] ?: emptyList()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .glassCard(cornerRadius = 20.dp, borderColor = accentColor, surfaceColor = surfaceColor)
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.width(75.dp)) {
+                                Text(registration, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Text("A320neo", fontSize = 9.sp, fontWeight = FontWeight.SemiBold, color = textSec)
+                            }
+
+                            Box(modifier = Modifier.weight(1f).height(46.dp)) {
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    drawLine(
+                                        color = Color.White.copy(alpha = 0.05f),
+                                        start = Offset(0f, size.height / 2),
+                                        end = Offset(size.width, size.height / 2),
+                                        strokeWidth = 2.dp.toPx()
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    fleetFlights.forEach { flight ->
+                                        val statusColor = when (flight.status) {
+                                            "ON_AIR" -> accentColor
+                                            "DELAYED" -> Color(parseColor(themeColors.kpiBad))
+                                            "ARRIVED" -> Color(parseColor(themeColors.kpiGood))
+                                            else -> Color.Gray
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(statusColor.copy(alpha = 0.15f))
+                                                .border(1.dp, statusColor.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                                                .clickable { selectedFlightForDetail = flight }
+                                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = "${flight.flightNumber} ➔ ${flight.destination}",
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -1156,10 +1597,11 @@ fun GanttScreen(themeColors: ThemeColors) {
                     }
                 }
             }
+
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
 
-        // Modal de Detalles en Composable
+        // Details Modal
         selectedFlightForDetail?.let { flight ->
             FlightDetailModal(
                 flight = flight,

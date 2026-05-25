@@ -872,9 +872,47 @@ struct FollowUpView: View {
     }
 }
 
-// ==========================================
-// 7. VISTA: GANTT INTERACTIVO (GanttView)
-// ==========================================
+struct FlightSliderTimeline: View {
+    let progress: CGFloat
+    let activeColor: Color
+    let inactiveColor: Color
+    
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                // Background line
+                Rectangle()
+                    .fill(inactiveColor.opacity(0.15))
+                    .frame(height: 2)
+                
+                // Active line
+                Rectangle()
+                    .fill(activeColor)
+                    .frame(width: geo.size.width * progress, height: 3)
+                
+                // Fine Ticks
+                HStack(spacing: 0) {
+                    ForEach(0..<25, id: \.self) { i in
+                        let tickProgress = CGFloat(i) / 24.0
+                        Rectangle()
+                            .fill(tickProgress <= progress ? activeColor : inactiveColor.opacity(0.25))
+                            .frame(width: 1, height: i % 5 == 0 ? 8 : 4)
+                        if i < 24 { Spacer() }
+                    }
+                }
+                
+                // Thumb indicator
+                Circle()
+                    .fill(activeColor)
+                    .frame(width: 12, height: 12)
+                    .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                    .shadow(color: activeColor.opacity(0.5), radius: 4)
+                    .offset(x: min(max(0, geo.size.width * progress - 6), geo.size.width - 12))
+            }
+        }
+        .frame(height: 16)
+    }
+}
 
 class iOSGanttViewModel: ObservableObject {
     let viewModel: GanttViewModel
@@ -899,6 +937,10 @@ struct GanttView: View {
     @State private var selectedFlight: Flight? = nil
     @State private var filterStatus: String = "ALL"
     
+    // viewMode: 0 = Live List, 1 = Gantt Timeline
+    @State private var viewMode = 0
+    @State private var subTabFilterTransit = 0 // 0 = En Tránsito, 1 = Todos
+    
     private let hours = ["12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]
     
     init(storage: AviationStorage) {
@@ -907,69 +949,336 @@ struct GanttView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            VStack(spacing: 12) {
-                HStack {
-                    Image(systemName: "magnifyingglass").foregroundColor(themeManager.current.textSecondary)
-                    TextField("", text: $searchText).foregroundColor(.white).placeholder(when: searchText.isEmpty) {
-                        Text("Buscar por vuelo, origen o matrícula...").foregroundColor(.white.opacity(0.3))
+            // 1. HEADER PREMIUM
+            HStack {
+                HStack(spacing: 12) {
+                    // User Avatar
+                    ZStack {
+                        Circle()
+                            .fill(themeManager.current.accent.opacity(0.15))
+                            .frame(width: 48, height: 48)
+                            .overlay(Circle().stroke(themeManager.current.accent.opacity(0.3), lineWidth: 1))
+                        Image(systemName: "person.fill")
+                            .foregroundColor(themeManager.current.accent)
+                            .font(.system(size: 20))
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hola, Julian!")
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .foregroundColor(themeManager.current.textSecondary)
+                        Text("MEX - Ciudad de México")
+                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .foregroundColor(.white)
                     }
                 }
-                .padding().background(Color.white.opacity(0.05)).cornerRadius(14).overlay(RoundedRectangle(cornerRadius: 14).stroke(themeManager.current.border, lineWidth: 1))
                 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        StatusFilterButton(label: "Todos", value: "ALL", active: filterStatus) { filterStatus = "ALL" }
-                        StatusFilterButton(label: "En Aire", value: "ON_AIR", active: filterStatus) { filterStatus = "ON_AIR" }
-                        StatusFilterButton(label: "Demorados", value: "DELAYED", active: filterStatus) { filterStatus = "DELAYED" }
-                        StatusFilterButton(label: "Arribados", value: "ARRIVED", active: filterStatus) { filterStatus = "ARRIVED" }
+                Spacer()
+                
+                // Notification Bell
+                ZStack(alignment: .topTrailing) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.03))
+                            .frame(width: 44, height: 44)
+                            .overlay(Circle().stroke(Color.white.opacity(0.08), lineWidth: 1))
+                        Image(systemName: "bell.fill")
+                            .foregroundColor(.white)
+                            .font(.system(size: 18))
                     }
+                    
+                    Circle()
+                        .fill(themeManager.current.kpiBad)
+                        .frame(width: 8, height: 8)
+                        .offset(x: -2, y: 2)
                 }
             }
-            .padding(.horizontal, 20).padding(.top, 20)
-            
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
-                    HStack(spacing: 0) {
-                        Text("Matrícula").font(.system(size: 11, weight: .bold, design: .rounded)).foregroundColor(themeManager.current.textSecondary).frame(width: 80, alignment: .leading)
-                        HStack(spacing: 0) {
-                            ForEach(hours, id: \.self) { hour in
-                                Text(hour).font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundColor(themeManager.current.textSecondary).frame(maxWidth: .infinity)
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+
+            // 2. TOGGLE DE VISTA (Live List vs Gantt)
+            HStack(spacing: 0) {
+                Button(action: { withAnimation { viewMode = 0 } }) {
+                    Text("Vuelos en Vivo ✈️")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(viewMode == 0 ? .white : themeManager.current.textSecondary)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(viewMode == 0 ? themeManager.current.accent : Color.clear)
+                        .cornerRadius(20)
+                }
+                
+                Button(action: { withAnimation { viewMode = 1 } }) {
+                    Text("Línea Gantt 📊")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(viewMode == 1 ? .white : themeManager.current.textSecondary)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(viewMode == 1 ? themeManager.current.accent : Color.clear)
+                        .cornerRadius(20)
+                }
+            }
+            .padding(4)
+            .background(Color.white.opacity(0.03))
+            .cornerRadius(24)
+            .overlay(RoundedRectangle(cornerRadius: 24).stroke(themeManager.current.accent.opacity(0.2), lineWidth: 1))
+            .padding(.horizontal, 20)
+
+            if viewMode == 0 {
+                // VISTA 0: VUELOS EN VIVO (MOCKUP STYLE)
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 20) {
+                        
+                        // Curved Path Card
+                        VStack(spacing: 15) {
+                            ZStack {
+                                // Draw dotted arc curve
+                                GeometryReader { geo in
+                                    Path { path in
+                                        path.move(to: CGPoint(x: 20, y: 55))
+                                        path.addQuadCurve(
+                                            to: CGPoint(x: geo.size.width - 20, y: 55),
+                                            control: CGPoint(x: geo.size.width / 2, y: 15)
+                                        )
+                                    }
+                                    .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [8, 6]))
+                                    .foregroundColor(themeManager.current.accent.opacity(0.4))
+                                }
+                                .frame(height: 70)
+                                
+                                // Plane in center
+                                Image(systemName: "paperplane.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(.white)
+                                    .offset(y: -10)
+                                
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Origen").font(.system(size: 9, weight: .bold, design: .rounded)).foregroundColor(themeManager.current.textSecondary)
+                                        Text("MEX").font(.system(size: 22, weight: .black, design: .rounded)).foregroundColor(.white)
+                                    }
+                                    Spacer()
+                                    Text("25 de Mayo 2026").font(.system(size: 11, weight: .bold, design: .rounded)).foregroundColor(themeManager.current.textSecondary).padding(.bottom, -20)
+                                    Spacer()
+                                    VStack(alignment: .trailing, spacing: 2) {
+                                        Text("Destino").font(.system(size: 9, weight: .bold, design: .rounded)).foregroundColor(themeManager.current.textSecondary)
+                                        Text("CUN").font(.system(size: 22, weight: .black, design: .rounded)).foregroundColor(.white)
+                                    }
+                                }
+                                .padding(.top, 40)
                             }
+                            
+                            // Segmented Switch
+                            HStack(spacing: 0) {
+                                Button(action: { subTabFilterTransit = 0 }) {
+                                    Text("En Tránsito")
+                                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                                        .foregroundColor(subTabFilterTransit == 0 ? .white : themeManager.current.textSecondary)
+                                        .padding(.vertical, 8)
+                                        .frame(maxWidth: .infinity)
+                                        .background(subTabFilterTransit == 0 ? themeManager.current.accent.opacity(0.2) : Color.clear)
+                                        .cornerRadius(18)
+                                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(subTabFilterTransit == 0 ? themeManager.current.accent.opacity(0.4) : Color.clear, lineWidth: 1))
+                                }
+                                Button(action: { subTabFilterTransit = 1 }) {
+                                    Text("Todos los Vuelos")
+                                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                                        .foregroundColor(subTabFilterTransit == 1 ? .white : themeManager.current.textSecondary)
+                                        .padding(.vertical, 8)
+                                        .frame(maxWidth: .infinity)
+                                        .background(subTabFilterTransit == 1 ? themeManager.current.accent.opacity(0.2) : Color.clear)
+                                        .cornerRadius(18)
+                                        .overlay(RoundedRectangle(cornerRadius: 18).stroke(subTabFilterTransit == 1 ? themeManager.current.accent.opacity(0.4) : Color.clear, lineWidth: 1))
+                                }
+                            }
+                            .padding(3)
+                            .background(Color.black.opacity(0.15))
+                            .cornerRadius(21)
+                        }
+                        .padding(20)
+                        .glassCard(borderColor: themeManager.current.accent, surfaceColor: themeManager.current.surface.opacity(0.25))
+                        .padding(.horizontal, 20)
+                        
+                        // Search Box
+                        HStack {
+                            Image(systemName: "magnifyingglass").foregroundColor(themeManager.current.textSecondary)
+                            TextField("", text: $searchText).foregroundColor(.white).placeholder(when: searchText.isEmpty) {
+                                Text("Buscar por vuelo, origen o matrícula...").foregroundColor(.white.opacity(0.3))
+                            }
+                        }
+                        .padding().background(Color.white.opacity(0.05)).cornerRadius(14).overlay(RoundedRectangle(cornerRadius: 14).stroke(themeManager.current.border, lineWidth: 1))
+                        .padding(.horizontal, 20)
+                        
+                        // Flights List
+                        if filteredLiveFlights.isEmpty {
+                            Text("No hay vuelos en tránsito en este momento.")
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                                .foregroundColor(themeManager.current.textSecondary)
+                                .padding(40)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        } else {
+                            LazyVStack(spacing: 16) {
+                                ForEach(filteredLiveFlights, id: \.id) { flight in
+                                    let progress = getSimulatedProgress(status: flight.status)
+                                    let statusCol = getStatusColor(status: flight.status)
+                                    let statusLbl = getStatusLabel(status: flight.status)
+                                    
+                                    VStack(spacing: 15) {
+                                        // Card Top Header
+                                        HStack(alignment: .center) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(flight.origin)
+                                                    .font(.system(size: 20, weight: .black, design: .rounded))
+                                                    .foregroundColor(.white)
+                                                Text(flight.origin == "MEX" ? "Ciudad de México" : "Origen")
+                                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                                    .foregroundColor(themeManager.current.textSecondary)
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            VStack(spacing: 2) {
+                                                Image(systemName: "paperplane.fill")
+                                                    .font(.system(size: 12))
+                                                    .foregroundColor(themeManager.current.accent)
+                                                Text("1h 45m")
+                                                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                                                    .foregroundColor(themeManager.current.textSecondary)
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            VStack(alignment: .trailing, spacing: 2) {
+                                                Text(flight.destination)
+                                                    .font(.system(size: 20, weight: .black, design: .rounded))
+                                                    .foregroundColor(.white)
+                                                Text(flight.destination == "CUN" ? "Cancún" : "Destino")
+                                                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                                    .foregroundColor(themeManager.current.textSecondary)
+                                            }
+                                        }
+                                        
+                                        // Slider Timeline
+                                        FlightSliderTimeline(
+                                            progress: progress,
+                                            activeColor: statusCol,
+                                            inactiveColor: themeManager.current.textSecondary
+                                        )
+                                        
+                                        // Card Footer
+                                        HStack {
+                                            HStack(spacing: 6) {
+                                                Circle()
+                                                    .fill(statusCol)
+                                                    .frame(width: 8, height: 8)
+                                                Text("\(flight.flightNumber) • \(flight.registration)")
+                                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                                                    .foregroundColor(.white)
+                                            }
+                                            
+                                            Spacer()
+                                            
+                                            Text(statusLbl)
+                                                .font(.system(size: 9, weight: .black, design: .rounded))
+                                                .foregroundColor(statusCol)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 4)
+                                                .background(statusCol.opacity(0.15))
+                                                .cornerRadius(12)
+                                                .overlay(RoundedRectangle(cornerRadius: 12).stroke(statusCol.opacity(0.4), lineWidth: 1))
+                                        }
+                                    }
+                                    .padding(20)
+                                    .glassCard(borderColor: themeManager.current.accent, surfaceColor: themeManager.current.surface.opacity(0.2))
+                                    .onTapGesture { selectedFlight = flight }
+                                }
+                            }
+                            .padding(.horizontal, 20)
+                        }
+                    }
+                    .padding(.bottom, 30)
+                }
+            } else {
+                // VISTA 1: TIMELINE GANTT (EXISTENTE REESTRUCTURADA)
+                VStack(spacing: 12) {
+                    HStack {
+                        Image(systemName: "magnifyingglass").foregroundColor(themeManager.current.textSecondary)
+                        TextField("", text: $searchText).foregroundColor(.white).placeholder(when: searchText.isEmpty) {
+                            Text("Buscar por vuelo, origen o matrícula...").foregroundColor(.white.opacity(0.3))
+                        }
+                    }
+                    .padding().background(Color.white.opacity(0.05)).cornerRadius(14).overlay(RoundedRectangle(cornerRadius: 14).stroke(themeManager.current.border, lineWidth: 1))
+                    .padding(.horizontal, 20)
+                    
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            StatusFilterButton(label: "Todos", value: "ALL", active: filterStatus) { filterStatus = "ALL" }
+                            StatusFilterButton(label: "En Aire", value: "ON_AIR", active: filterStatus) { filterStatus = "ON_AIR" }
+                            StatusFilterButton(label: "Demorados", value: "DELAYED", active: filterStatus) { filterStatus = "DELAYED" }
+                            StatusFilterButton(label: "Arribados", value: "ARRIVED", active: filterStatus) { filterStatus = "ARRIVED" }
                         }
                     }
                     .padding(.horizontal, 20)
-                    
-                    let groupedFlights = Dictionary(grouping: filteredFlights, by: { $0.registration })
-                    ForEach(groupedFlights.keys.sorted(), id: \.self) { reg in
-                        let regFlights = groupedFlights[reg] ?? []
+                }
+                
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 20) {
                         HStack(spacing: 0) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(reg).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundColor(.white)
-                                Text("A320neo").font(.system(size: 9, weight: .semibold, design: .rounded)).foregroundColor(themeManager.current.textSecondary)
+                            Text("Matrícula").font(.system(size: 11, weight: .bold, design: .rounded)).foregroundColor(themeManager.current.textSecondary).frame(width: 80, alignment: .leading)
+                            HStack(spacing: 0) {
+                                ForEach(hours, id: \.self) { hour in
+                                    Text(hour).font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundColor(themeManager.current.textSecondary).frame(maxWidth: .infinity)
+                                }
                             }
-                            .frame(width: 80, alignment: .leading)
-                            
-                            ZStack(alignment: .leading) {
-                                HStack(spacing: 0) {
-                                    ForEach(0..<hours.count, id: \.self) { _ in
-                                        Divider().background(themeManager.current.border.opacity(0.3)).frame(maxWidth: .infinity)
+                        }
+                        .padding(.horizontal, 20)
+                        
+                        let groupedFlights = Dictionary(grouping: filteredFlights, by: { $0.registration })
+                        ForEach(groupedFlights.keys.sorted(), id: \.self) { reg in
+                            let regFlights = groupedFlights[reg] ?? []
+                            HStack(spacing: 0) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(reg).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundColor(.white)
+                                    Text("A320neo").font(.system(size: 9, weight: .semibold, design: .rounded)).foregroundColor(themeManager.current.textSecondary)
+                                }
+                                .frame(width: 80, alignment: .leading)
+                                
+                                ZStack(alignment: .leading) {
+                                    HStack(spacing: 0) {
+                                        ForEach(0..<hours.count, id: \.self) { _ in
+                                            Divider().background(themeManager.current.border.opacity(0.3)).frame(maxWidth: .infinity)
+                                        }
+                                    }
+                                    ForEach(regFlights, id: \.id) { flight in
+                                        FlightCapsule(flight: flight, theme: themeManager) { selectedFlight = flight }
+                                            .offset(x: getTimelineOffset(for: flight))
                                     }
                                 }
-                                ForEach(regFlights, id: \.id) { flight in
-                                    FlightCapsule(flight: flight, theme: themeManager) { selectedFlight = flight }
-                                        .offset(x: getTimelineOffset(for: flight))
-                                }
+                                .frame(height: 50)
                             }
-                            .frame(height: 50)
+                            .padding(.vertical, 8).padding(.horizontal, 15).glassCard(borderColor: themeManager.current.border).padding(.horizontal, 15)
                         }
-                        .padding(.vertical, 8).padding(.horizontal, 15).glassCard(borderColor: themeManager.current.border).padding(.horizontal, 15)
                     }
+                    .padding(.bottom, 30)
                 }
-                .padding(.bottom, 30)
             }
         }
         .background(OrganicBackground(accentColor: themeManager.current.accent, isDarkMode: themeManager.current.theme != .light))
         .sheet(item: $selectedFlight) { flight in FlightDetailView(flight: flight, theme: themeManager) }
+    }
+    
+    private var filteredLiveFlights: [Flight] {
+        ganttVM.flights.filter { flight in
+            let matchesSearch = searchText.isEmpty || flight.flightNumber.localizedCaseInsensitiveContains(searchText) || flight.registration.localizedCaseInsensitiveContains(searchText)
+            
+            let matchesStatus: Bool
+            if subTabFilterTransit == 0 {
+                matchesStatus = flight.status == "ON_AIR" || flight.status == "DELAYED"
+            } else {
+                matchesStatus = true
+            }
+            return matchesSearch && matchesStatus
+        }
     }
     
     private var filteredFlights: [Flight] {
@@ -987,7 +1296,36 @@ struct GanttView: View {
         let scale = 250.0 / 720.0
         return CGFloat(totalMinutes * scale)
     }
+    
+    private func getSimulatedProgress(status: String) -> CGFloat {
+        switch status {
+        case "ARRIVED": return 1.0
+        case "FUTURE": return 0.0
+        case "ON_AIR": return 0.65
+        case "DELAYED": return 0.35
+        default: return 0.5
+        }
+    }
+    
+    private func getStatusColor(status: String) -> Color {
+        switch status {
+        case "ON_AIR": return themeManager.current.accent
+        case "DELAYED": return themeManager.current.kpiBad
+        case "ARRIVED": return themeManager.current.kpiGood
+        default: return Color.gray
+        }
+    }
+    
+    private func getStatusLabel(status: String) -> String {
+        switch status {
+        case "ON_AIR": return "EN VUELO"
+        case "DELAYED": return "RETRASADO"
+        case "ARRIVED": return "ARRIBADO"
+        default: return "PLANEADO"
+        }
+    }
 }
+
 
 struct FlightCapsule: View {
     let flight: Flight
@@ -1261,7 +1599,7 @@ struct MainView: View {
             HStack(spacing: 0) {
                 TabBarItem(index: 0, icon: "chart.pie.fill", label: "KPIs", activeTab: $selectedTab, theme: themeManager)
                 TabBarItem(index: 1, icon: "hourglass.badge.plus", label: "Follow Up", activeTab: $selectedTab, theme: themeManager)
-                TabBarItem(index: 2, icon: "calendar.day.timeline.left", label: "Gantt", activeTab: $selectedTab, theme: themeManager)
+                TabBarItem(index: 2, icon: "calendar.day.timeline.left", label: "Vuelos", activeTab: $selectedTab, theme: themeManager)
                 TabBarItem(index: 3, icon: "network", label: "CCO", activeTab: $selectedTab, theme: themeManager)
                 TabBarItem(index: 4, icon: "gearshape.fill", label: "Ajustes", activeTab: $selectedTab, theme: themeManager)
             }
